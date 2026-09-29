@@ -3,13 +3,22 @@
 #include <cuda_runtime.h>
 #include <iostream>
 
-// CUDA kernel for RGB to grayscale conversion.
-__global__ void GrayscaleKernel(
-    const unsigned char* input,
-    unsigned char* output,
-    int width,
-    int height) {
+// Checks CUDA API calls and reports errors clearly.
+#define CUDA_CHECK(call)                                                   \
+  do {                                                                     \
+    cudaError_t error = (call);                                            \
+    if (error != cudaSuccess) {                                            \
+      std::cerr << "CUDA error: " << cudaGetErrorString(error)             \
+                << " at " << __FILE__ << ":" << __LINE__ << std::endl;     \
+      return;                                                              \
+    }                                                                      \
+  } while (0)
 
+// Converts an RGB image to grayscale.
+__global__ void GrayscaleKernel(const unsigned char* input,
+                                unsigned char* output,
+                                int width,
+                                int height) {
   int x = blockIdx.x * blockDim.x + threadIdx.x;
   int y = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -17,26 +26,25 @@ __global__ void GrayscaleKernel(
     return;
   }
 
-  int pixel = y * width + x;
-  int rgb_index = pixel * 3;
+  int pixelIndex = (y * width + x);
+  int rgbIndex = pixelIndex * 3;
 
-  unsigned char red = input[rgb_index];
-  unsigned char green = input[rgb_index + 1];
-  unsigned char blue = input[rgb_index + 2];
+  unsigned char red = input[rgbIndex];
+  unsigned char green = input[rgbIndex + 1];
+  unsigned char blue = input[rgbIndex + 2];
 
-  output[pixel] = static_cast<unsigned char>(
-      0.299f * red + 0.587f * green + 0.114f * blue);
+  output[pixelIndex] =
+      static_cast<unsigned char>(0.299f * red +
+                                 0.587f * green +
+                                 0.114f * blue);
 }
 
-
-// CUDA kernel for brightness adjustment.
-__global__ void BrightnessKernel(
-    const unsigned char* input,
-    unsigned char* output,
-    int width,
-    int height,
-    int brightness) {
-
+// Adjusts RGB brightness.
+__global__ void BrightnessKernel(const unsigned char* input,
+                                 unsigned char* output,
+                                 int width,
+                                 int height,
+                                 int brightness) {
   int x = blockIdx.x * blockDim.x + threadIdx.x;
   int y = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -44,33 +52,24 @@ __global__ void BrightnessKernel(
     return;
   }
 
-  int pixel = y * width + x;
-  int rgb_index = pixel * 3;
+  int pixelIndex = (y * width + x);
+  int rgbIndex = pixelIndex * 3;
 
   for (int channel = 0; channel < 3; ++channel) {
-    int value = input[rgb_index + channel] + brightness;
+    int value = static_cast<int>(input[rgbIndex + channel]) + brightness;
 
-    if (value > 255) {
-      value = 255;
-    }
+    value = max(0, min(255, value));
 
-    if (value < 0) {
-      value = 0;
-    }
-
-    output[rgb_index + channel] =
+    output[rgbIndex + channel] =
         static_cast<unsigned char>(value);
   }
 }
 
-
-// CUDA kernel for simple box blur.
-__global__ void BlurKernel(
-    const unsigned char* input,
-    unsigned char* output,
-    int width,
-    int height) {
-
+// Applies a simple 3x3 blur filter.
+__global__ void BlurKernel(const unsigned char* input,
+                           unsigned char* output,
+                           int width,
+                           int height) {
   int x = blockIdx.x * blockDim.x + threadIdx.x;
   int y = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -78,179 +77,136 @@ __global__ void BlurKernel(
     return;
   }
 
-  int red_sum = 0;
-  int green_sum = 0;
-  int blue_sum = 0;
+  int redSum = 0;
+  int greenSum = 0;
+  int blueSum = 0;
   int count = 0;
 
-  for (int offset_y = -1; offset_y <= 1; ++offset_y) {
-    for (int offset_x = -1; offset_x <= 1; ++offset_x) {
+  for (int dy = -1; dy <= 1; ++dy) {
+    for (int dx = -1; dx <= 1; ++dx) {
+      int neighborX = x + dx;
+      int neighborY = y + dy;
 
-      int neighbor_x = x + offset_x;
-      int neighbor_y = y + offset_y;
+      if (neighborX >= 0 && neighborX < width &&
+          neighborY >= 0 && neighborY < height) {
+        int neighborIndex = (neighborY * width + neighborX) * 3;
 
-      if (neighbor_x >= 0 &&
-          neighbor_x < width &&
-          neighbor_y >= 0 &&
-          neighbor_y < height) {
-
-        int neighbor_pixel =
-            (neighbor_y * width + neighbor_x) * 3;
-
-        red_sum += input[neighbor_pixel];
-        green_sum += input[neighbor_pixel + 1];
-        blue_sum += input[neighbor_pixel + 2];
+        redSum += input[neighborIndex];
+        greenSum += input[neighborIndex + 1];
+        blueSum += input[neighborIndex + 2];
 
         ++count;
       }
     }
   }
 
-  int output_index = (y * width + x) * 3;
+  int outputIndex = (y * width + x) * 3;
 
-  output[output_index] =
-      static_cast<unsigned char>(red_sum / count);
-
-  output[output_index + 1] =
-      static_cast<unsigned char>(green_sum / count);
-
-  output[output_index + 2] =
-      static_cast<unsigned char>(blue_sum / count);
+  output[outputIndex] =
+      static_cast<unsigned char>(redSum / count);
+  output[outputIndex + 1] =
+      static_cast<unsigned char>(greenSum / count);
+  output[outputIndex + 2] =
+      static_cast<unsigned char>(blueSum / count);
 }
 
+// Converts an RGB image to grayscale using the GPU.
+void ConvertToGrayscale(const unsigned char* input,
+                        unsigned char* output,
+                        int width,
+                        int height) {
+  unsigned char* deviceInput = nullptr;
+  unsigned char* deviceOutput = nullptr;
 
-void ConvertToGrayscale(
-    const unsigned char* input,
-    unsigned char* output,
-    int width,
-    int height) {
+  size_t inputSize = width * height * 3 * sizeof(unsigned char);
+  size_t outputSize = width * height * sizeof(unsigned char);
 
-  unsigned char* device_input = nullptr;
-  unsigned char* device_output = nullptr;
+  CUDA_CHECK(cudaMalloc(&deviceInput, inputSize));
+  CUDA_CHECK(cudaMalloc(&deviceOutput, outputSize));
 
-  size_t input_size = width * height * 3 * sizeof(unsigned char);
-  size_t output_size = width * height * sizeof(unsigned char);
+  CUDA_CHECK(cudaMemcpy(deviceInput, input, inputSize,
+                        cudaMemcpyHostToDevice));
 
-  cudaMalloc(&device_input, input_size);
-  cudaMalloc(&device_output, output_size);
+  dim3 blockSize(16, 16);
+  dim3 gridSize((width + blockSize.x - 1) / blockSize.x,
+                (height + blockSize.y - 1) / blockSize.y);
 
-  cudaMemcpy(
-      device_input,
-      input,
-      input_size,
-      cudaMemcpyHostToDevice);
+  GrayscaleKernel<<<gridSize, blockSize>>>(
+      deviceInput, deviceOutput, width, height);
 
-  dim3 block_size(16, 16);
-  dim3 grid_size(
-      (width + block_size.x - 1) / block_size.x,
-      (height + block_size.y - 1) / block_size.y);
+  CUDA_CHECK(cudaGetLastError());
+  CUDA_CHECK(cudaDeviceSynchronize());
 
-  GrayscaleKernel<<<grid_size, block_size>>>(
-      device_input,
-      device_output,
-      width,
-      height);
+  CUDA_CHECK(cudaMemcpy(output, deviceOutput, outputSize,
+                        cudaMemcpyDeviceToHost));
 
-  cudaDeviceSynchronize();
-
-  cudaMemcpy(
-      output,
-      device_output,
-      output_size,
-      cudaMemcpyDeviceToHost);
-
-  cudaFree(device_input);
-  cudaFree(device_output);
+  cudaFree(deviceInput);
+  cudaFree(deviceOutput);
 }
 
+// Adjusts brightness using the GPU.
+void AdjustBrightness(const unsigned char* input,
+                      unsigned char* output,
+                      int width,
+                      int height,
+                      int brightness) {
+  unsigned char* deviceInput = nullptr;
+  unsigned char* deviceOutput = nullptr;
 
-void AdjustBrightness(
-    const unsigned char* input,
-    unsigned char* output,
-    int width,
-    int height,
-    int brightness) {
+  size_t imageSize = width * height * 3 * sizeof(unsigned char);
 
-  unsigned char* device_input = nullptr;
-  unsigned char* device_output = nullptr;
+  CUDA_CHECK(cudaMalloc(&deviceInput, imageSize));
+  CUDA_CHECK(cudaMalloc(&deviceOutput, imageSize));
 
-  size_t image_size =
-      width * height * 3 * sizeof(unsigned char);
+  CUDA_CHECK(cudaMemcpy(deviceInput, input, imageSize,
+                        cudaMemcpyHostToDevice));
 
-  cudaMalloc(&device_input, image_size);
-  cudaMalloc(&device_output, image_size);
+  dim3 blockSize(16, 16);
+  dim3 gridSize((width + blockSize.x - 1) / blockSize.x,
+                (height + blockSize.y - 1) / blockSize.y);
 
-  cudaMemcpy(
-      device_input,
-      input,
-      image_size,
-      cudaMemcpyHostToDevice);
+  BrightnessKernel<<<gridSize, blockSize>>>(
+      deviceInput, deviceOutput, width, height, brightness);
 
-  dim3 block_size(16, 16);
-  dim3 grid_size(
-      (width + block_size.x - 1) / block_size.x,
-      (height + block_size.y - 1) / block_size.y);
+  CUDA_CHECK(cudaGetLastError());
+  CUDA_CHECK(cudaDeviceSynchronize());
 
-  BrightnessKernel<<<grid_size, block_size>>>(
-      device_input,
-      device_output,
-      width,
-      height,
-      brightness);
+  CUDA_CHECK(cudaMemcpy(output, deviceOutput, imageSize,
+                        cudaMemcpyDeviceToHost));
 
-  cudaDeviceSynchronize();
-
-  cudaMemcpy(
-      output,
-      device_output,
-      image_size,
-      cudaMemcpyDeviceToHost);
-
-  cudaFree(device_input);
-  cudaFree(device_output);
+  cudaFree(deviceInput);
+  cudaFree(deviceOutput);
 }
 
+// Applies a simple blur using the GPU.
+void ApplyBlur(const unsigned char* input,
+               unsigned char* output,
+               int width,
+               int height) {
+  unsigned char* deviceInput = nullptr;
+  unsigned char* deviceOutput = nullptr;
 
-void ApplyBlur(
-    const unsigned char* input,
-    unsigned char* output,
-    int width,
-    int height) {
+  size_t imageSize = width * height * 3 * sizeof(unsigned char);
 
-  unsigned char* device_input = nullptr;
-  unsigned char* device_output = nullptr;
+  CUDA_CHECK(cudaMalloc(&deviceInput, imageSize));
+  CUDA_CHECK(cudaMalloc(&deviceOutput, imageSize));
 
-  size_t image_size =
-      width * height * 3 * sizeof(unsigned char);
+  CUDA_CHECK(cudaMemcpy(deviceInput, input, imageSize,
+                        cudaMemcpyHostToDevice));
 
-  cudaMalloc(&device_input, image_size);
-  cudaMalloc(&device_output, image_size);
+  dim3 blockSize(16, 16);
+  dim3 gridSize((width + blockSize.x - 1) / blockSize.x,
+                (height + blockSize.y - 1) / blockSize.y);
 
-  cudaMemcpy(
-      device_input,
-      input,
-      image_size,
-      cudaMemcpyHostToDevice);
+  BlurKernel<<<gridSize, blockSize>>>(
+      deviceInput, deviceOutput, width, height);
 
-  dim3 block_size(16, 16);
-  dim3 grid_size(
-      (width + block_size.x - 1) / block_size.x,
-      (height + block_size.y - 1) / block_size.y);
+  CUDA_CHECK(cudaGetLastError());
+  CUDA_CHECK(cudaDeviceSynchronize());
 
-  BlurKernel<<<grid_size, block_size>>>(
-      device_input,
-      device_output,
-      width,
-      height);
+  CUDA_CHECK(cudaMemcpy(output, deviceOutput, imageSize,
+                        cudaMemcpyDeviceToHost));
 
-  cudaDeviceSynchronize();
-
-  cudaMemcpy(
-      output,
-      device_output,
-      image_size,
-      cudaMemcpyDeviceToHost);
-
-  cudaFree(device_input);
-  cudaFree(device_output);
+  cudaFree(deviceInput);
+  cudaFree(deviceOutput);
 }
