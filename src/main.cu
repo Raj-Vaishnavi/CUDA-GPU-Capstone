@@ -331,7 +331,7 @@ int main(int argc, char* argv[]) {
   CUDA_CHECK(cudaEventElapsedTime(
       &gpu_time,
       start_event,
-      stop_event);
+      stop_event));
 
   // Save output.
   bool save_success;
@@ -343,8 +343,8 @@ int main(int argc, char* argv[]) {
   }
 
   if (!save_success) {
-    CUDA_CHECK(cudaEventDestroy(start_event));
-    CUDA_CHECK(cudaEventDestroy(stop_event));
+    cudaEventDestroy(start_event);
+    cudaEventDestroy(stop_event);
     return 1;
   }
 
