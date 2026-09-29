@@ -1,12 +1,20 @@
 #include "image_processing.cuh"
 
 #include <cuda_runtime.h>
-
-#include <chrono>
 #include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
+
+#define CUDA_CHECK(call)                                                   \
+  do {                                                                     \
+    cudaError_t error = (call);                                            \
+    if (error != cudaSuccess) {                                            \
+      std::cerr << "CUDA error: " << cudaGetErrorString(error)             \
+                << " at " << __FILE__ << ":" << __LINE__ << std::endl;     \
+      return 1;                                                            \
+    }                                                                      \
+  } while (0)
 
 struct Image {
   int width;
@@ -218,9 +226,9 @@ int main(int argc, char* argv[]) {
   // Display GPU information.
   int device_count = 0;
 
-  cudaError_t cuda_status = cudaGetDeviceCount(&device_count);
+  CUDA_CHECK(cudaGetDeviceCount(&device_count));
 
-  if (cuda_status != cudaSuccess || device_count == 0) {
+  if (device_count == 0) {
     std::cerr << "Error: No CUDA-capable GPU was detected."
               << std::endl;
     return 1;
@@ -228,7 +236,7 @@ int main(int argc, char* argv[]) {
 
   cudaDeviceProp device_properties;
 
-  cudaGetDeviceProperties(&device_properties, 0);
+  CUDA_CHECK(cudaGetDeviceProperties(&device_properties, 0));
 
   std::cout << "\n========================================\n";
   std::cout << "CUDA GPU Image Processing\n";
@@ -284,11 +292,10 @@ int main(int argc, char* argv[]) {
   cudaEvent_t start_event;
   cudaEvent_t stop_event;
 
-  cudaEventCreate(&start_event);
-  cudaEventCreate(&stop_event);
+  CUDA_CHECK(cudaEventCreate(&start_event));
+  CUDA_CHECK(cudaEventCreate(&stop_event));
 
-  cudaEventRecord(start_event);
-
+  CUDA_CHECK(cudaEventRecord(start_event));
   // Execute selected CUDA operation.
   if (operation == "grayscale") {
 
@@ -316,12 +323,12 @@ int main(int argc, char* argv[]) {
         input_image.height);
   }
 
-  cudaEventRecord(stop_event);
-  cudaEventSynchronize(stop_event);
+  CUDA_CHECK(cudaEventRecord(stop_event));
+  CUDA_CHECK(cudaEventSynchronize(stop_event));
 
   float gpu_time = 0.0f;
 
-  cudaEventElapsedTime(
+  CUDA_CHECK(cudaEventElapsedTime(
       &gpu_time,
       start_event,
       stop_event);
@@ -336,8 +343,8 @@ int main(int argc, char* argv[]) {
   }
 
   if (!save_success) {
-    cudaEventDestroy(start_event);
-    cudaEventDestroy(stop_event);
+    CUDA_CHECK(cudaEventDestroy(start_event));
+    CUDA_CHECK(cudaEventDestroy(stop_event));
     return 1;
   }
 
