@@ -1,0 +1,10 @@
+image,operation,width,height,gpu_time_ms
+small,grayscale,512,512,0.949664
+medium,grayscale,1024,768,1.61568
+large,grayscale,1920,1080,3.10982
+small,brightness,512,512,0.889504
+medium,brightness,1024,768,2.0504
+large,brightness,1920,1080,3.7135
+small,blur,512,512,0.926624
+medium,blur,1024,768,2.02563
+large,blur,1920,1080,4.02928

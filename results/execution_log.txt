@@ -1,0 +1,14 @@
+
+========================================
+CUDA GPU Image Processing
+========================================
+GPU: Tesla T4
+Compute Capability: 7.5
+Input: data/input/large.ppm
+Output: results/demo_grayscale.pgm
+Operation: grayscale
+Image Size: 1920 x 1080
+Channels: 3
+GPU Processing Time: 3.31251 ms
+Output saved successfully.
+========================================
