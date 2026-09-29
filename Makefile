@@ -4,7 +4,7 @@ TARGET = cuda_image_processor
 
 SRC = src/main.cu src/image_processing.cu
 
-NVCC_FLAGS = -O2 -std=c++14
+NVCC_FLAGS = -O2 -std=c++14 -arch=sm_75
 
 all: $(TARGET)
 
